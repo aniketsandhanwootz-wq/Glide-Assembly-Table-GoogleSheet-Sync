@@ -2,7 +2,7 @@ services:
   - type: cron
     name: glide-sync-cron
     env: python
-    schedule: "0 */1 * * *"  # Run every 1 hours, adjust as needed
+    schedule: "0 * * * *"  # Run every 1 hours, adjust as needed
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
     envVars:
