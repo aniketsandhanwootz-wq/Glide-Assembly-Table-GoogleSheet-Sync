@@ -361,7 +361,7 @@ DETAIL_COLUMNS = [
 SUMMARY_COLUMNS = [
     "timestamp_ist","run_id","script_version","sheet_name","glide_mode",
     "rows_in_glide","rows_in_sheet_before","rows_in_sheet_after",
-    "inserted","updated_cells","deleted","hash_prev","hash_new","result","error_message"
+    "inserted","updated_cells","deleted","duplicates_deleted","hash_prev","hash_new","result","error_message"
 ]
 
 def ensure_log_headers(svc):
@@ -385,9 +385,9 @@ def append_run_summary(svc, row: List[str]):
         append_rows(svc, LOG_SHEET_ID, LOG_SUMMARY_TAB, [row])
 
 def now_ist_iso():
-    """Return current time in IST timezone as ISO string"""
+    """Return current time in IST timezone as ISO string without timezone suffix"""
     ist = pytz.timezone('Asia/Kolkata')
-    return datetime.now(ist).replace(microsecond=0).isoformat()
+    return datetime.now(ist).replace(microsecond=0).strftime('%Y-%m-%d %H:%M:%S')
 
 # ---- NEW: helpers to snapshot mapped data into a compact JSON string ----
 def mapped_snapshot_from_values(values: List[str], cur_index: Dict[str,int], selected_headers: List[str]) -> str:
@@ -459,7 +459,7 @@ def mirror(force=False, dry=False, inspect=False):
         append_run_summary(svc, [
             ts, run_id, SCRIPT_VERSION, SHEET_NAME, GLIDE_MODE,
             str(rows_in_glide), str(rows_in_sheet_before), str(rows_in_sheet_after),
-            "0", "0", str(rows_in_sheet_before), prev_hash, new_hash, "ok", ""
+            "0", "0", str(rows_in_sheet_before), "0", prev_hash, new_hash, "ok", ""
         ])
         meta[meta_key] = new_hash
         set_meta_map(svc, meta)
@@ -471,7 +471,7 @@ def mirror(force=False, dry=False, inspect=False):
             append_run_summary(svc, [
                 ts, run_id, SCRIPT_VERSION, SHEET_NAME, GLIDE_MODE,
                 str(rows_in_glide), str(rows_in_sheet_before), str(rows_in_sheet_before),
-                "0", "0", "0", prev_hash, new_hash, "skipped", ""
+                "0", "0", "0", "0", prev_hash, new_hash, "skipped", ""
             ])
         return {"skipped": True, "reason": "hash-match", "inserted": 0, "updated_cells": 0, "deleted": 0, "verified": True}
 
@@ -613,7 +613,7 @@ def mirror(force=False, dry=False, inspect=False):
     append_run_summary(svc, [
         ts, run_id, SCRIPT_VERSION, SHEET_NAME, GLIDE_MODE,
         str(rows_in_glide), str(rows_in_sheet_before), str(rows_in_sheet_after),
-        str(inserted), str(updated_cells_count), str(deleted), prev_hash, new_hash, "ok", ""
+        str(inserted), str(updated_cells_count), str(deleted), str(len(duplicate_rows_to_delete)), prev_hash, new_hash, "ok", ""
     ])
 
     meta[meta_key] = new_hash
