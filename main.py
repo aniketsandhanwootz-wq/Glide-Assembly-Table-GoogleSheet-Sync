@@ -4,6 +4,7 @@ import requests
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime, timezone
+import pytz
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
@@ -351,14 +352,14 @@ def ensure_headers_union_preserve_extras(svc, selected_headers: List[str]) -> Li
     return current
 
 # =========
-# Logging helpers (NEW)
+# Logging helpers (NEW) - Modified to use IST
 # =========
 DETAIL_COLUMNS = [
-    "timestamp_utc","run_id","action","row_id","sheet_row_num",
+    "timestamp_ist","run_id","action","row_id","sheet_row_num",
     "column_name","old_value","new_value"
 ]
 SUMMARY_COLUMNS = [
-    "timestamp_utc","run_id","script_version","sheet_name","glide_mode",
+    "timestamp_ist","run_id","script_version","sheet_name","glide_mode",
     "rows_in_glide","rows_in_sheet_before","rows_in_sheet_after",
     "inserted","updated_cells","deleted","hash_prev","hash_new","result","error_message"
 ]
@@ -383,8 +384,10 @@ def append_run_summary(svc, row: List[str]):
     if LOG_ENABLED and LOG_SHEET_ID and row:
         append_rows(svc, LOG_SHEET_ID, LOG_SUMMARY_TAB, [row])
 
-def now_utc_iso():
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+def now_ist_iso():
+    """Return current time in IST timezone as ISO string"""
+    ist = pytz.timezone('Asia/Kolkata')
+    return datetime.now(ist).replace(microsecond=0).isoformat()
 
 # ---- NEW: helpers to snapshot mapped data into a compact JSON string ----
 def mapped_snapshot_from_values(values: List[str], cur_index: Dict[str,int], selected_headers: List[str]) -> str:
@@ -424,7 +427,7 @@ def mirror(force=False, dry=False, inspect=False):
     new_hash = compute_hash_selected(g_rows, selected_headers, g2s) if g_rows else "EMPTY"
 
     run_id = uuid.uuid4().hex[:8]
-    ts = now_utc_iso()
+    ts = now_ist_iso()
 
     body_before = read_body(svc, SHEET_ID, SHEET_NAME, len(current_headers))
     rows_in_sheet_before = len(body_before)
@@ -479,8 +482,10 @@ def mirror(force=False, dry=False, inspect=False):
         key_header = selected_headers[0]
     key_col_idx = cur_index[key_header]
 
+    # NEW: Track duplicate rows in the sheet and mark them for deletion
     sheet_map: Dict[str, List[str]] = {}
     rownum_by_key: Dict[str, int] = {}
+    duplicate_rows_to_delete: List[int] = []
     rn = 1
     for row in body_before:
         rn += 1
@@ -488,8 +493,13 @@ def mirror(force=False, dry=False, inspect=False):
         k = prow[key_col_idx] if key_col_idx < len(prow) else ""
         if k:
             sk = str(k)
-            sheet_map[sk] = [str(x) for x in prow]
-            rownum_by_key[sk] = rn
+            if sk in sheet_map:
+                # This is a duplicate - mark for deletion
+                duplicate_rows_to_delete.append(rn)
+            else:
+                # First occurrence - keep it
+                sheet_map[sk] = [str(x) for x in prow]
+                rownum_by_key[sk] = rn
 
     def derived_id_from_obj(obj: Dict) -> str:
         if not DERIVED_ID_HEADER:
@@ -530,6 +540,11 @@ def mirror(force=False, dry=False, inspect=False):
 
     mapped_positions = [cur_index[h] for h in selected_headers if h in cur_index]
 
+    # Add duplicate rows to deletion list and log them
+    for dup_row_num in duplicate_rows_to_delete:
+        rows_to_delete.append(dup_row_num)
+        detail_logs.append([ts, run_id, "delete_duplicate", "duplicate", str(dup_row_num), "(duplicate row)", "(duplicate)", "(blank)"])
+
     seen = set()
     for key, sheet_vals in sheet_map.items():
         new_vals = g_map.get(key)
@@ -563,7 +578,8 @@ def mirror(force=False, dry=False, inspect=False):
             "dry": True,
             "inserted": len(rows_to_append),
             "updated_cells": len(updated_cells),
-            "deleted": len(rows_to_delete)
+            "deleted": len(rows_to_delete),
+            "duplicates_found": len(duplicate_rows_to_delete)
         }
 
     if WRITE_MODE == "delta":
@@ -608,6 +624,7 @@ def mirror(force=False, dry=False, inspect=False):
         "inserted": inserted,
         "updated_cells": updated_cells_count,
         "deleted": deleted,
+        "duplicates_removed": len(duplicate_rows_to_delete),
         "verified": True
     }
 
