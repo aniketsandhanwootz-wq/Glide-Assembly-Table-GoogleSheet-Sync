@@ -1,0 +1,42 @@
+services:
+  - type: cron
+    name: glide-sync-cron
+    env: python
+    schedule: "0 */1 * * *"  # Run every 1 hours, adjust as needed
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: GOOGLE_SHEET_ID
+        sync: false
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
+      - key: GLIDE_MODE
+        sync: false
+      - key: GLIDE_BASE_URL
+        sync: false
+      - key: GLIDE_TOKEN
+        sync: false
+      - key: GLIDE_APP_ID
+        sync: false
+      - key: GLIDE_TABLE_NAME
+        sync: false
+      - key: UNIQUE_KEY
+        sync: false
+      - key: SHEET_NAME
+        sync: false
+      - key: META_SHEET
+        sync: false
+      - key: WRITE_MODE
+        sync: false
+      - key: DERIVED_ID_HEADER
+        sync: false
+      - key: SELECT_COLUMNS
+        sync: false
+      - key: LOG_ENABLED
+        sync: false
+      - key: LOG_SHEET_ID
+        sync: false
+      - key: LOG_DETAILS_TAB
+        sync: false
+      - key: LOG_SUMMARY_TAB
+        sync: false
