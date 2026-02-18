@@ -13,13 +13,13 @@ JOBS = [
 def main():
     root = Path(__file__).resolve().parent
     env = os.environ.copy()
-
+    env["PYTHONPATH"] = str(root) + (os.pathsep + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
     # Run sequentially by default (predictable logs/quota)
     failed = 0
     for job in JOBS:
         p = root / job
         print(f"\n=== RUN: {job} ===")
-        r = subprocess.run([sys.executable, str(p)], env=env)
+        r = subprocess.run([sys.executable, str(p)], env=env, cwd=str(root))
         if r.returncode != 0:
             failed += 1
             print(f"!! FAILED: {job} (code={r.returncode})")
