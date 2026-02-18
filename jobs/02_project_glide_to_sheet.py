@@ -8,6 +8,14 @@ import uuid
 from typing import List, Dict, Tuple, Any
 from pathlib import Path
 from datetime import datetime
+
+# --- import path fix (Render cron) ---
+import sys
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+# --- end fix ---
+
 from zai_webhook import emit_zai_event
 import pytz
 import requests
