@@ -8,7 +8,7 @@ import uuid
 from typing import List, Dict, Tuple, Any
 from pathlib import Path
 from datetime import datetime
-
+from zai_webhook import emit_zai_event
 import pytz
 import requests
 from dotenv import load_dotenv
@@ -54,6 +54,9 @@ WRITE_MODE        = opt("PROJ_WRITE_MODE", "delta").lower()  # delta | full
 UNIQUE_KEY        = opt("PROJ_UNIQUE_KEY", "$rowID")
 DERIVED_ID_HEADER = opt("PROJ_DERIVED_ID_HEADER", "ID")
 
+# Trigger config: fire PROJECT_UPDATED when status becomes mfg
+PROJ_MFG_STATUS_HEADER = opt("PROJ_MFG_STATUS_HEADER", "Status_assembly")
+PROJ_MFG_STATUS_VALUE  = opt("PROJ_MFG_STATUS_VALUE", "mfg").strip().lower()
 # Optional: make derived-id fields explicit (recommended)
 DERIVED_ID_PROJECT_HEADER = opt("PROJ_DERIVED_ID_PROJECT_HEADER", "")  # e.g. "Project"
 DERIVED_ID_PART_HEADER    = opt("PROJ_DERIVED_ID_PART_HEADER", "")     # e.g. "Name"
@@ -378,6 +381,12 @@ def compute_hash_selected_from_sheet(
 ) -> str:
     # Hash the sheet’s mapped view in the same “shape” as glide hash
     cur_index = {h: i for i, h in enumerate(current_headers)}
+    legacy_id_header = DERIVED_ID_HEADER or "ID"
+    if "ID" in current_headers:
+        legacy_id_header = "ID"
+
+    status_idx = cur_index.get(PROJ_MFG_STATUS_HEADER)
+    id_idx = cur_index.get(legacy_id_header)
     ordered = [h for h in selected_headers if h != DERIVED_ID_HEADER]
     mapped_positions = [cur_index[h] for h in ordered if h in cur_index]
     derived_pos = cur_index.get(DERIVED_ID_HEADER) if DERIVED_ID_HEADER else None
@@ -488,7 +497,10 @@ def mirror(force: bool = False, dry: bool = False, inspect: bool = False):
     meta_key = f"hash:proj:{GLIDE_TABLE_NAME}:{SHEET_NAME}"
     meta = get_meta_map(svc)
     prev_glide_hash = meta.get(meta_key, "")
+    triggered_projects: List[str] = []
 
+    def _meta_trigger_key(legacy_id: str) -> str:
+        return f"mfg_triggered:{legacy_id}"
     new_glide_hash = compute_hash_selected_from_rows(g_rows, selected_headers, g2s) if g_rows else "EMPTY"
 
     run_id = uuid.uuid4().hex[:8]
@@ -617,6 +629,18 @@ def mirror(force: bool = False, dry: bool = False, inspect: bool = False):
             newv = new_vals[ci]
             if oldv != newv:
                 updated_cells.append((rownum_by_key[key], ci + 1, newv))
+
+                # Trigger PROJECT_UPDATED only when status flips to mfg
+                if status_idx is not None and id_idx is not None and ci == status_idx:
+                    # legacy_id read from the CURRENT sheet row (same row being updated)
+                    legacy_id = sheet_vals[id_idx] if id_idx < len(sheet_vals) else ""
+                    legacy_id = str(legacy_id or "").strip()
+
+                    if legacy_id and str(newv or "").strip().lower() == PROJ_MFG_STATUS_VALUE:
+                        mk = _meta_trigger_key(legacy_id)
+                        if not meta.get(mk):  # one-time
+                            triggered_projects.append(legacy_id)
+                            meta[mk] = now_ist_iso()
                 if LOG_DETAILS:
                     detail_logs.append([ts, run_id, "update", key, str(rownum_by_key[key]), current_headers[ci], oldv, newv])
 
@@ -626,6 +650,17 @@ def mirror(force: bool = False, dry: bool = False, inspect: bool = False):
         if key in seen:
             continue
         rows_to_append.append(g_map[key])
+        # If a new project row is inserted and it's already in mfg, trigger once.
+        if status_idx is not None and id_idx is not None:
+            new_row_vals = g_map[key]
+            legacy_id = new_row_vals[id_idx] if id_idx < len(new_row_vals) else ""
+            legacy_id = str(legacy_id or "").strip()
+            status_val = new_row_vals[status_idx] if status_idx < len(new_row_vals) else ""
+            if legacy_id and str(status_val or "").strip().lower() == PROJ_MFG_STATUS_VALUE:
+                mk = _meta_trigger_key(legacy_id)
+                if not meta.get(mk):
+                    triggered_projects.append(legacy_id)
+                    meta[mk] = now_ist_iso()
         predicted_rownum = 2 + current_row_count + len(rows_to_append)
         if LOG_DETAILS:
             new_json = snapshot_row(g_map[key], current_headers, selected_headers)
@@ -684,9 +719,13 @@ def mirror(force: bool = False, dry: bool = False, inspect: bool = False):
         prev_glide_hash, new_glide_hash, "ok", ""
     ])
 
-    # Persist glide hash
+    # Persist glide hash + any "mfg_triggered:<legacy_id>" flags
     meta[meta_key] = new_glide_hash
     set_meta_map(svc, meta)
+
+    # Emit PROJECT_UPDATED one per legacy_id (one-time due to meta flags above)
+    for legacy_id in sorted(set([x for x in triggered_projects if str(x).strip()])):
+        emit_zai_event("PROJECT_UPDATED", {"legacy_id": legacy_id})
 
     return {
         "ok": True,
