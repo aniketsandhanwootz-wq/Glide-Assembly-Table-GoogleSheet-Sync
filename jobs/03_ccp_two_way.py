@@ -8,6 +8,15 @@ import time
 import pytz
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+
+# --- import path fix (Render cron) ---
+import sys
+from pathlib import Path
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+# --- end fix ---
+
 from zai_webhook import emit_zai_event
 # ========================
 # Load .env
