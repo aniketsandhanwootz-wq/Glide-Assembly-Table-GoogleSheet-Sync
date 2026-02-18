@@ -7,7 +7,7 @@ from datetime import datetime
 import pytz
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
-
+from zai_webhook import emit_zai_event
 # ========================
 # Load .env
 # ========================
@@ -372,7 +372,7 @@ def run():
         print("DEBUG sample_sheet_keys:", list(sorted(sheet_keys))[:5])
         print("DEBUG sample_glide_keys:", list(sorted(glide_keys))[:5])
     details: List[List[str]] = []
-
+    dashboard_row_ids_for_trigger: List[str] = []
     # A) Glide -> Sheet (append missing keys)
     to_sheet = [
         g for g in glide_rows
@@ -382,13 +382,26 @@ def run():
     sheet_appends = []
     for g in to_sheet:
         k = str(g.get(GLIDE_SYNCKEY_COL, "")).strip()
+        # Trigger only for Glide -> Sheet (Glide-originated changes)
+        # Prefer the real Glide row id as dashboard_row_id (matches ZAI graph preference).
+        row_id = ""
+        for rk in ("$rowID", "rowID"):
+            v = str(g.get(rk, "")).strip()
+            if v:
+                row_id = v
+                break
+        if row_id:
+            dashboard_row_ids_for_trigger.append(row_id)
         new_row = make_sheet_row_from_glide(g, header, idx)
         sheet_appends.append(new_row)
         details.append([ts, run_id, "append_sheet", k, "sheet", "(row)", "(blank)", json.dumps(new_row, ensure_ascii=False)])
         sheet_keys.add(k)
 
     append_rows(svc, SHEET_ID, SHEET_TAB, sheet_appends)
-
+    # Emit DASHBOARD_UPDATED only for the Glide->Sheet rows we appended
+    # One event per row_id (best for idempotency and ZAI ingestion).
+    for rid in dashboard_row_ids_for_trigger:
+        emit_zai_event("DASHBOARD_UPDATED", {"dashboard_row_id": rid})
     # B) Sheet -> Glide (append missing keys)
     to_glide = []
     kpos = idx.get(SYNCKEY_HEADER)
