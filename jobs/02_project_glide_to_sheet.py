@@ -389,21 +389,6 @@ def compute_hash_selected_from_sheet(
 ) -> str:
     # Hash the sheet’s mapped view in the same “shape” as glide hash
     cur_index = {h: i for i, h in enumerate(current_headers)}
-    # ---------- Needed for mfg trigger logic ----------
-    # Determine column indexes in the *current sheet* for status + legacy ID.
-    legacy_id_header = DERIVED_ID_HEADER or "ID"
-    if "ID" in current_headers:
-        legacy_id_header = "ID"
-
-    status_idx = cur_index.get(PROJ_MFG_STATUS_HEADER)
-    id_idx = cur_index.get(legacy_id_header)
-    # --------------------------------------------------
-    legacy_id_header = DERIVED_ID_HEADER or "ID"
-    if "ID" in current_headers:
-        legacy_id_header = "ID"
-
-    status_idx = cur_index.get(PROJ_MFG_STATUS_HEADER)
-    id_idx = cur_index.get(legacy_id_header)
     ordered = [h for h in selected_headers if h != DERIVED_ID_HEADER]
     mapped_positions = [cur_index[h] for h in ordered if h in cur_index]
     derived_pos = cur_index.get(DERIVED_ID_HEADER) if DERIVED_ID_HEADER else None
@@ -503,7 +488,16 @@ def mirror(force: bool = False, dry: bool = False, inspect: bool = False):
     selected_headers, g2s = build_selected_headers()
     current_headers = ensure_headers_union_preserve_extras(svc, selected_headers)
     cur_index = {h: i for i, h in enumerate(current_headers)}
+    # ---------- Needed for mfg trigger logic ----------
+    # Determine column indexes in the *current sheet* for status + legacy ID.
+    # We compute this inside mirror() because mirror() uses these indices.
+    legacy_id_header = DERIVED_ID_HEADER or "ID"
+    if "ID" in current_headers:
+        legacy_id_header = "ID"
 
+    status_idx = cur_index.get(PROJ_MFG_STATUS_HEADER)
+    id_idx = cur_index.get(legacy_id_header)
+    # --------------------------------------------------
     # Key column header in sheet
     key_header = SELECT_COLUMNS.get(UNIQUE_KEY, "") or selected_headers[0]
     if key_header not in current_headers:
