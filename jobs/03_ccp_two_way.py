@@ -8,7 +8,7 @@ import time
 import pytz
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
-
+from zai_webhook import emit_zai_event
 # ========================
 # Load .env
 # ========================
@@ -352,6 +352,7 @@ def run():
             glide_by_id[gid] = g
 
     details: List[List[str]] = []
+    ccp_ids_for_trigger: List[str] = []
     updates_sheet: List[Tuple[int,int,str]] = []
     sheet_appends: List[List[str]] = []
     glide_added = 0
@@ -388,6 +389,8 @@ def run():
         if gid not in sheet_by_id:
             newr = sheet_row_from_glide(g)
             sheet_appends.append(newr)
+                # Glide-originated CCP (new in sheet)
+            ccp_ids_for_trigger.append(gid)
             details.append([ts, run_id, "append_sheet", gid, "sheet", "(row)", "(blank)", json.dumps(newr, ensure_ascii=False)])
 
     # B) Sheet rows: add/update glide, or pull glide->sheet based on UpdatedAt
@@ -463,6 +466,9 @@ def run():
             set_if_diff(SHEET_UPDATED_AT_HEADER, str(g.get(GLIDE_UPDATED_AT_COL, "") or ""))
             set_if_diff(SHEET_UPDATED_BY_HEADER, str(g.get(GLIDE_UPDATED_BY_COL, "") or ""))
 
+            # If glide_to_sheet caused any changes (or even just updated fields),
+            # fire CCP_UPDATED for this CCP ID.
+            ccp_ids_for_trigger.append(gid)
             # mapped fields
             for sh, gc in MAPPING.items():
                 set_if_diff(sh, "" if g.get(gc) is None else str(g.get(gc)))
@@ -472,7 +478,10 @@ def run():
         append_rows(svc, SHEET_ID, SHEET_TAB, sheet_appends)
     if updates_sheet:
         batch_update_cells(svc, SHEET_ID, SHEET_TAB, updates_sheet)
-
+    # Emit CCP_UPDATED only for Glide-originated changes
+    # (glide_to_sheet + glide-only appends). Dedup to avoid double-fire.
+    for ccp_id in sorted(set([x for x in ccp_ids_for_trigger if str(x).strip()])):
+        emit_zai_event("CCP_UPDATED", {"ccp_id": ccp_id})
     # Logs
     log_details(svc, details)
 
