@@ -389,7 +389,7 @@ def run():
         if gid not in sheet_by_id:
             newr = sheet_row_from_glide(g)
             sheet_appends.append(newr)
-                # Glide-originated CCP (new in sheet)
+            # Glide-originated CCP (new in sheet)
             ccp_ids_for_trigger.append(gid)
             details.append([ts, run_id, "append_sheet", gid, "sheet", "(row)", "(blank)", json.dumps(newr, ensure_ascii=False)])
 
@@ -466,12 +466,15 @@ def run():
             set_if_diff(SHEET_UPDATED_AT_HEADER, str(g.get(GLIDE_UPDATED_AT_COL, "") or ""))
             set_if_diff(SHEET_UPDATED_BY_HEADER, str(g.get(GLIDE_UPDATED_BY_COL, "") or ""))
 
-            # If glide_to_sheet caused any changes (or even just updated fields),
-            # fire CCP_UPDATED for this CCP ID.
-            ccp_ids_for_trigger.append(gid)
             # mapped fields
+            before_n = len(updates_sheet)
             for sh, gc in MAPPING.items():
                 set_if_diff(sh, "" if g.get(gc) is None else str(g.get(gc)))
+            after_n = len(updates_sheet)
+
+            # Fire CCP_UPDATED only if glide_to_sheet actually changed sheet cells
+            if after_n > before_n:
+                ccp_ids_for_trigger.append(gid)
 
     # Apply writes
     if sheet_appends:
