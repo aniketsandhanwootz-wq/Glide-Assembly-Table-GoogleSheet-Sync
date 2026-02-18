@@ -12,63 +12,62 @@ def _truthy(v: str) -> bool:
     return (v or "").strip().lower() in ("1", "true", "yes", "y", "on")
 
 
-ZAI_WEBHOOK_URL = (os.getenv("ZAI_WEBHOOK_URL") or "").strip()  # e.g. https://<render-app>.onrender.com/webhooks/sheets
-ZAI_WEBHOOK_SECRET = (os.getenv("ZAI_WEBHOOK_SECRET") or os.getenv("WEBHOOK_SECRET") or "").strip()
-ZAI_WEBHOOK_TIMEOUT_SECS = float((os.getenv("ZAI_WEBHOOK_TIMEOUT_SECS") or "8").strip() or 8)
-ZAI_WEBHOOK_RETRIES = int((os.getenv("ZAI_WEBHOOK_RETRIES") or "2").strip() or 2)
-
-# If true: webhook failures raise and can fail the job (NOT recommended)
-ZAI_WEBHOOK_STRICT = _truthy(os.getenv("ZAI_WEBHOOK_STRICT") or "false")
+def _opt(name: str, default: str = "") -> str:
+    return (os.getenv(name, default) or "").strip()
 
 
-def emit_event(
-    *,
-    event_type: str,
-    payload: Dict[str, Any],
-    meta: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+def emit_zai_event(event_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Best-effort ZAI webhook call. Does NOT affect sync unless ZAI_WEBHOOK_STRICT=true.
+    Fire-and-forget style webhook emitter to ZAI.
+
+    Uses the SAME endpoint style as your AppSheet/AppsScript triggers:
+      POST <ZAI_WEBHOOK_URL>   (recommended: https://<host>/webhooks/sheets)
+      Header: x-sheets-secret: <ZAI_WEBHOOK_SECRET>
+
+    Env:
+      ZAI_WEBHOOK_URL        -> required to emit
+      ZAI_WEBHOOK_SECRET     -> required to emit
+      ZAI_WEBHOOK_ENABLED    -> default true
+      ZAI_WEBHOOK_TIMEOUT_S  -> default 20
+      ZAI_WEBHOOK_RETRIES    -> default 2 (total attempts = 1 + retries)
+      ZAI_WEBHOOK_SOURCE     -> default "sync_script"
+
+    Returns a small dict with ok + status for logs.
+    Never raises (won't break sync jobs).
     """
-    if not ZAI_WEBHOOK_URL:
-        return {"ok": False, "skipped": True, "reason": "ZAI_WEBHOOK_URL not set"}
+    enabled = _truthy(_opt("ZAI_WEBHOOK_ENABLED", "true"))
+    url = _opt("ZAI_WEBHOOK_URL", "")
+    secret = _opt("ZAI_WEBHOOK_SECRET", "")
+
+    if not enabled or not url or not secret:
+        return {"ok": False, "skipped": True, "reason": "webhook disabled or missing env"}
+
+    timeout_s = float(_opt("ZAI_WEBHOOK_TIMEOUT_S", "20") or 20)
+    retries = int(_opt("ZAI_WEBHOOK_RETRIES", "2") or 2)
 
     body = dict(payload or {})
     body["event_type"] = event_type
 
-    m = dict(meta or {})
-    # Keep parity with your ZAI graph's expectation: payload.meta is a dict
-    body["meta"] = m
+    meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+    meta.setdefault("source", _opt("ZAI_WEBHOOK_SOURCE", "sync_script"))
+    body["meta"] = meta
 
-    headers = {}
-    if ZAI_WEBHOOK_SECRET:
-        headers["x-sheets-secret"] = ZAI_WEBHOOK_SECRET
+    headers = {
+        "x-sheets-secret": secret,
+        "content-type": "application/json",
+    }
 
-    last_err = None
-    for attempt in range(1, ZAI_WEBHOOK_RETRIES + 2):  # retries + first try
+    last_err: Optional[str] = None
+    for attempt in range(0, retries + 1):
         try:
-            r = requests.post(
-                ZAI_WEBHOOK_URL,
-                json=body,
-                headers=headers,
-                timeout=ZAI_WEBHOOK_TIMEOUT_SECS,
-            )
+            r = requests.post(url, json=body, headers=headers, timeout=timeout_s)
             if 200 <= r.status_code < 300:
-                return {"ok": True, "status": r.status_code, "response": _safe_json(r)}
-            last_err = RuntimeError(f"webhook status={r.status_code} body={r.text[:500]}")
+                return {"ok": True, "status": r.status_code}
+            last_err = f"HTTP {r.status_code}: {r.text[:500]}"
         except Exception as e:
-            last_err = e
+            last_err = str(e)[:500]
 
-        time.sleep(0.4 * attempt)
+        # backoff
+        time.sleep(0.6 * (attempt + 1))
 
-    if ZAI_WEBHOOK_STRICT:
-        raise last_err  # fail hard only if explicitly requested
-
-    return {"ok": False, "error": str(last_err)[:500]}
-
-
-def _safe_json(r: requests.Response) -> Any:
-    try:
-        return r.json()
-    except Exception:
-        return {"text": (r.text or "")[:500]}
+    return {"ok": False, "skipped": False, "error": last_err or "unknown error"}
