@@ -389,7 +389,15 @@ def compute_hash_selected_from_sheet(
 ) -> str:
     # Hash the sheet’s mapped view in the same “shape” as glide hash
     cur_index = {h: i for i, h in enumerate(current_headers)}
+    # ---------- Needed for mfg trigger logic ----------
+    # Determine column indexes in the *current sheet* for status + legacy ID.
+    legacy_id_header = DERIVED_ID_HEADER or "ID"
+    if "ID" in current_headers:
+        legacy_id_header = "ID"
 
+    status_idx = cur_index.get(PROJ_MFG_STATUS_HEADER)
+    id_idx = cur_index.get(legacy_id_header)
+    # --------------------------------------------------
     legacy_id_header = DERIVED_ID_HEADER or "ID"
     if "ID" in current_headers:
         legacy_id_header = "ID"
