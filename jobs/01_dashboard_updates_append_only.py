@@ -379,7 +379,7 @@ def run():
         print("DEBUG sample_sheet_keys:", list(sorted(sheet_keys))[:5])
         print("DEBUG sample_glide_keys:", list(sorted(glide_keys))[:5])
     details: List[List[str]] = []
-    dashboard_row_ids_for_trigger: List[str] = []
+    dashboard_events_for_trigger: List[Dict[str, str]] = []
     # A) Glide -> Sheet (append missing keys)
     to_sheet = [
         g for g in glide_rows
@@ -390,15 +390,20 @@ def run():
     for g in to_sheet:
         k = str(g.get(GLIDE_SYNCKEY_COL, "")).strip()
         # Trigger only for Glide -> Sheet (Glide-originated changes)
-        # Prefer the real Glide row id as dashboard_row_id (matches ZAI graph preference).
+        # Canonical identity is Dashboard Update ID (k / TeLQR).
+        # Row ID is sent only as backward-compatible alias if available.
         row_id = ""
         for rk in ("$rowID", "rowID"):
             v = str(g.get(rk, "")).strip()
             if v:
                 row_id = v
                 break
+
+        dashboard_event = {"dashboard_update_id": k}
         if row_id:
-            dashboard_row_ids_for_trigger.append(row_id)
+            dashboard_event["dashboard_row_id"] = row_id
+
+        dashboard_events_for_trigger.append(dashboard_event)
         new_row = make_sheet_row_from_glide(g, header, idx)
         sheet_appends.append(new_row)
         details.append([ts, run_id, "append_sheet", k, "sheet", "(row)", "(blank)", json.dumps(new_row, ensure_ascii=False)])
@@ -406,9 +411,10 @@ def run():
 
     append_rows(svc, SHEET_ID, SHEET_TAB, sheet_appends)
     # Emit DASHBOARD_UPDATED only for the Glide->Sheet rows we appended
-    # One event per row_id (best for idempotency and ZAI ingestion).
-    for rid in dashboard_row_ids_for_trigger:
-        emit_zai_event("DASHBOARD_UPDATED", {"dashboard_row_id": rid})
+    # One event per row, using canonical Dashboard Update ID.
+    # Row ID is included only as backward-compatible alias when available.
+    for ev in dashboard_events_for_trigger:
+        emit_zai_event("DASHBOARD_UPDATED", ev)
     # B) Sheet -> Glide (append missing keys)
     to_glide = []
     kpos = idx.get(SYNCKEY_HEADER)
